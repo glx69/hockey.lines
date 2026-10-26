@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Hockey Lines</title>
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="theme-color" content="#1565c0">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="icon-192.png">
+<style>
+:root{--bg:#f4f6f9;--card:#fff;--text:#14202e;--mute:#667587;--line:#dde3ea;--pri:#1565c0;--priT:#fff;--ice:#e3f1ff;--next:#fff6dc;--dbl:#e65100;--bad:#c62828;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px);color-scheme:light}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#10161d;--card:#1a232e;--text:#e8eef5;--mute:#93a2b3;--line:#2b3846;--pri:#4d9bf0;--priT:#04121f;--ice:#15304a;--next:#3a3114;--dbl:#ffa04d;--bad:#ef6a6a;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#10161d;--card:#1a232e;--text:#e8eef5;--mute:#93a2b3;--line:#2b3846;--pri:#4d9bf0;--priT:#04121f;--ice:#15304a;--next:#3a3114;--dbl:#ffa04d;--bad:#ef6a6a;color-scheme:dark}
+*{box-sizing:border-box}
+html,body{height:100%}
+body{margin:0;background:var(--bg);color:var(--text);font:16px/1.4 system-ui,-apple-system,Roboto,sans-serif}
+main{max-width:560px;margin:0 auto;padding:12px 12px 110px}
+h1{font-size:20px;margin:6px 0 12px}
+h2{font-size:13px;letter-spacing:.06em;text-transform:uppercase;color:var(--mute);margin:0 0 8px}
+.tabs{display:flex;gap:6px;margin-bottom:12px}
+.tabs button{flex:1;padding:10px;border:1px solid var(--line);background:var(--card);color:var(--text);border-radius:10px;font-size:15px;font-weight:600}
+.tabs button.on{background:var(--pri);color:var(--priT);border-color:var(--pri)}
+.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:12px;margin-bottom:12px}
+.card.ice{background:var(--ice)}.card.next{background:var(--next)}
+.row{display:flex;align-items:center;gap:8px;padding:10px 4px;border-bottom:1px solid var(--line)}
+.row:last-child{border-bottom:0}
+.row .n{flex:1;font-size:17px;font-weight:600}
+.row .s{color:var(--mute);font-size:13px}
+.num{display:inline-block;min-width:28px;text-align:center;color:var(--mute);font-weight:700}
+.badge{font-size:12px;font-weight:700;padding:2px 8px;border-radius:99px;background:var(--dbl);color:#fff}
+.badge.g{background:var(--pri);color:var(--priT)}
+button,input,select,textarea{font:inherit;color:var(--text)}
+input,select,textarea{width:100%;padding:10px;border:1px solid var(--line);border-radius:10px;background:var(--card)}
+.btn{padding:11px 14px;border-radius:10px;border:1px solid var(--line);background:var(--card);font-weight:600}
+.btn.p{background:var(--pri);color:var(--priT);border-color:var(--pri)}
+.btn.d{color:var(--bad)}
+.btn.sm{padding:6px 10px;font-size:14px}
+.bar{position:fixed;left:0;right:0;bottom:0;padding:10px 12px calc(10px + env(safe-area-inset-bottom,0px));background:var(--bg);border-top:1px solid var(--line)}
+.bar>div{max-width:560px;margin:0 auto;display:flex;gap:8px}
+.bar .btn.p{flex:1;font-size:19px;padding:15px}
+.sheet{position:fixed;inset:0;background:rgba(0,0,0,.5);display:flex;align-items:flex-end;z-index:9}
+.sheet>div{background:var(--card);width:100%;max-width:560px;margin:0 auto;border-radius:18px 18px 0 0;padding:14px 14px calc(14px + env(safe-area-inset-bottom,0px));max-height:80%;overflow:auto}
+.sheet .btn{display:block;width:100%;margin-top:8px;text-align:left}
+.mute{color:var(--mute);font-size:14px}
+.flex{display:flex;gap:8px;align-items:center}
+.tap{cursor:pointer}
+.chk{width:24px;height:24px}
+.hurt .n{text-decoration:line-through;color:var(--mute)}
+</style>
+</head>
+<body>
+<main id="app"></main>
+<script>
+const KEY='hockeyLines.v1';
+let S={roster:[],game:null,view:'roster'},sheet=null;
+try{const r=localStorage.getItem(KEY);if(r)S=Object.assign(S,JSON.parse(r))}catch(e){}
+const save=()=>{try{localStorage.setItem(KEY,JSON.stringify(S))}catch(e){}};
+const esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const P=id=>S.roster.find(p=>p.id===id);
+const uid=()=>Math.random().toString(36).slice(2,9);
+
+/* ---------- rotation logic ---------- */
+function pool(g){return S.roster.filter(p=>g.present[p.id]&&p.id!==g.goalie&&!g.out[p.id]).map(p=>p.id)}
+function slots(g){return Math.max(1,g.onIceTotal-1)}
+function pick(g,n,exclude=[]){
+  const idx=id=>S.roster.findIndex(p=>p.id===id);
+  return pool(g).filter(id=>!exclude.includes(id))
+    .sort((a,b)=>(g.counts[a]||0)-(g.counts[b]||0)||(g.last[a]??-1)-(g.last[b]??-1)||idx(a)-idx(b)).slice(0,n);
+}
+function credit(g,ids){ids.forEach(id=>{g.counts[id]=(g.counts[id]||0)+1;g.last[id]=g.shift})}
+function nextLine(g){const n=slots(g);return pool(g).length<=n?pool(g):pick(g,n)}
+function fixCurrent(g){
+  const ok=pool(g);g.current=g.current.filter(id=>ok.includes(id));
+  const need=slots(g)-g.current.length;
+  if(need>0){const add=pick(g,need,g.current);credit(g,add);g.current=g.current.concat(add)}
+}
+function snap(g){g.history.push(JSON.stringify({current:g.current,counts:g.counts,last:g.last,shift:g.shift,out:g.out,goalie:g.goalie}));if(g.history.length>40)g.history.shift()}
+function startGame(present,goalie,total){
+  const g={present,goalie,onIceTotal:total,current:[],counts:{},last:{},shift:1,out:{},history:[]};
+  g.current=pick(g,slots(g));credit(g,g.current);S.game=g;S.view='game';
+}
+function advance(){const g=S.game;snap(g);g.shift++;g.current=nextLine(g);credit(g,g.current)}
+function undo(){const g=S.game;const h=g.history.pop();if(!h)return;Object.assign(g,JSON.parse(h))}
+
+/* ---------- rendering ---------- */
+function nm(id){const p=P(id);return p?esc(p.name):'?'}
+function numOf(id){const p=P(id);return p&&p.num?'#'+esc(p.num):''}
+function render(){
+  save();
+  const a=document.getElementById('app');
+  const tabs=`<div class="tabs">${['roster','setup','game'].map(v=>`<button class="${S.view===v?'on':''}" data-act="view" data-v="${v}">${{roster:'Roster',setup:'Game Setup',game:'Live Game'}[v]}</button>`).join('')}</div>`;
+  a.innerHTML=`<h1>🏒 Hockey Lines</h1>${tabs}${S.view==='roster'?vRoster():S.view==='setup'?vSetup():vGame()}`+(S.view==='game'&&S.game?`<div class="bar"><div><button class="btn" data-act="undo">↩ Undo</button><button class="btn p" data-act="advance">Change Shift ▶</button></div></div>`:'')+(sheet?vSheet():'');
+}
+function vRoster(){
+  const rows=S.roster.map(p=>`<div class="row"><span class="num">${p.num?esc(p.num):'–'}</span><span class="n">${esc(p.name)}</span><button class="btn sm d" data-act="del" data-id="${p.id}">Remove</button></div>`).join('')||'<p class="mute">No players yet. Add some below.</p>';
+  return `<div class="card"><h2>Roster (${S.roster.length})</h2>${rows}</div>
+  <div class="card"><h2>Add players</h2>
+  <p class="mute" style="margin-top:0">Type or paste names, one per line (or separated by commas). Optionally add a jersey number first, like “17 Sam”.</p>
+  <textarea id="names" rows="4" placeholder="17 Sam&#10;Alex&#10;Jordan"></textarea>
+  <div style="margin-top:8px"><button class="btn p" data-act="add">Add to roster</button></div></div>`;
+}
+function vSetup(){
+  if(!S.roster.length)return `<div class="card"><p>Add players on the Roster tab first.</p></div>`;
+  const g=S.game,pre=g?g.present:Object.fromEntries(S.roster.map(p=>[p.id,true]));
+  const gl=g?g.goalie:'',tot=g?g.onIceTotal:5;
+  const rows=S.roster.map(p=>`<label class="row tap"><input type="checkbox" class="chk" data-pres="${p.id}" ${pre[p.id]?'checked':''}><span class="n">${esc(p.name)}</span><span class="s">${numOf(p.id)}</span></label>`).join('');
+  return `<div class="card"><h2>Who’s here today?</h2>${rows}</div>
+  <div class="card"><h2>Goalie (never rotates)</h2><select id="goalie">${S.roster.map(p=>`<option value="${p.id}" ${p.id===gl?'selected':''}>${esc(p.name)}</option>`).join('')}</select></div>
+  <div class="card"><h2>Players on ice (including goalie)</h2>
+  <div class="flex"><button class="btn" data-act="tot" data-d="-1">−</button><b id="tot" style="font-size:24px;min-width:32px;text-align:center">${tot}</b><button class="btn" data-act="tot" data-d="1">+</button></div>
+  <p class="mute" id="sumry"></p></div>
+  <button class="btn p" style="width:100%;font-size:18px;padding:14px" data-act="start">Start game</button>
+  ${g?'<p class="mute">Starting a new game replaces the current one.</p>':''}`;
+}
+function updSummary(){
+  const el=document.getElementById('sumry');if(!el)return;
+  const pr=[...document.querySelectorAll('[data-pres]')].filter(c=>c.checked).map(c=>c.dataset.pres);
+  const gl=document.getElementById('goalie').value,tot=+document.getElementById('tot').textContent;
+  const sk=pr.filter(i=>i!==gl).length,on=tot-1;
+  el.textContent=!pr.includes(gl)?'Goalie must be marked present.':sk<=on?`${sk} skaters, ${on} spots: everyone plays the whole time.`:`${sk} skaters, ${on} on ice at a time: ${sk-on} sit each shift.`;
+}
+function vGame(){
+  const g=S.game;
+  if(!g)return `<div class="card"><p>No game running. Set one up on the Game Setup tab.</p></div>`;
+  const cur=g.current,nxt=nextLine(g),pl=pool(g),n=slots(g);
+  const bench=pl.filter(id=>!cur.includes(id));
+  const hurt=S.roster.filter(p=>g.present[p.id]&&g.out[p.id]);
+  const everyone=pl.length<=n;
+  const ln=(id,extra='',act='ice')=>`<div class="row tap" data-act="${act}" data-id="${id}"><span class="num">${numOf(id)||'–'}</span><span class="n">${nm(id)}</span>${extra}<span class="s">${g.counts[id]||0} shifts</span></div>`;
+  const gRow=`<div class="row tap" data-act="goalie"><span class="num">${numOf(g.goalie)||'–'}</span><span class="n">${nm(g.goalie)}</span><span class="badge g">GOALIE</span></div>`;
+  const dbl=nxt.filter(id=>cur.includes(id));
+  const nextHtml=everyone?'<p class="mute" style="margin:0">Not enough skaters to rotate. Everyone stays on.</p>':nxt.map(id=>ln(id,cur.includes(id)?'<span class="badge">2× DOUBLE SHIFT</span>':'','bench')).join('');
+  return `<div class="card ice"><h2>On ice now · Shift ${g.shift}</h2>${gRow}${cur.map(id=>ln(id)).join('')}<p class="mute" style="margin:6px 0 0">Tap a player to sub or mark hurt.</p></div>
+  ${everyone?'':`<div class="card next"><h2>Going in next</h2>${nextHtml}${dbl.length?`<p class="mute" style="margin:6px 0 0">Double shifting: ${dbl.map(nm).join(', ')} (stay on from this shift).</p>`:''}</div>`}
+  <div class="card"><h2>Sitting now (${bench.length})</h2>${bench.map(id=>ln(id,nxt.includes(id)&&!everyone?'<span class="badge g">NEXT</span>':'','bench')).join('')||'<p class="mute" style="margin:0">Nobody is sitting.</p>'}</div>
+  ${hurt.length?`<div class="card"><h2>Hurt / out</h2>${hurt.map(p=>`<div class="row hurt"><span class="n">${esc(p.name)}</span><button class="btn sm" data-act="back" data-id="${p.id}">Back in</button></div>`).join('')}</div>`:''}
+  <button class="btn d" data-act="end">End game</button>`;
+}
+function vSheet(){
+  const g=S.game,{type,id}=sheet;
+  const close=`<button class="btn" data-act="close">Cancel</button>`;
+  if(type==='ice'){
+    const bench=pool(g).filter(i=>!g.current.includes(i));
+    return `<div class="sheet" data-act="close"><div onclick="event.stopPropagation()"><h2>Sub out ${nm(id)}</h2>
+    ${bench.map(b=>`<button class="btn" data-act="swap" data-out="${id}" data-in="${b}">${nm(b)} in <span class="mute">(${g.counts[b]||0} shifts)</span></button>`).join('')||'<p class="mute">Nobody on the bench.</p>'}
+    <button class="btn d" data-act="hurt" data-id="${id}">${nm(id)} is hurt (auto-replace)</button>${close}</div></div>`;
+  }
+  if(type==='bench')return `<div class="sheet" data-act="close"><div onclick="event.stopPropagation()"><h2>${nm(id)}</h2>
+    ${g.current.length?`<p class="mute">Put on ice now in place of:</p>`+g.current.map(c=>`<button class="btn" data-act="swap" data-out="${c}" data-in="${id}">${nm(c)}</button>`).join(''):''}
+    <button class="btn d" data-act="hurt" data-id="${id}">${nm(id)} is hurt</button>${close}</div></div>`;
+  if(type==='goalie'){
+    const c=S.roster.filter(p=>g.present[p.id]&&p.id!==g.goalie);
+    return `<div class="sheet" data-act="close"><div onclick="event.stopPropagation()"><h2>Change goalie</h2>
+    ${c.map(p=>`<button class="btn" data-act="newgoalie" data-id="${p.id}">${esc(p.name)} → goalie</button>`).join('')}
+    <button class="btn d" data-act="hurtgoalie">${nm(g.goalie)} is hurt (pick replacement)</button>${close}</div></div>`;
+  }
+  return '';
+}
+
+/* ---------- events ---------- */
+document.addEventListener('change',e=>{if(e.target.matches('[data-pres],#goalie'))updSummary()});
+document.addEventListener('click',e=>{
+  const t=e.target.closest('[data-act]');if(!t)return;
+  const a=t.dataset.act,g=S.game,d=t.dataset;
+  if(a==='view'){S.view=d.v;sheet=null;render();if(d.v==='setup')updSummary();return}
+  if(a==='add'){
+    const v=document.getElementById('names').value.split(/[\n,]+/).map(s=>s.trim()).filter(Boolean);
+    v.forEach(s=>{const m=s.match(/^#?(\d{1,3})\s+(.+)$/);S.roster.push({id:uid(),name:m?m[2]:s,num:m?m[1]:''})});
+    render();return}
+  if(a==='del'){if(confirm('Remove this player?')){S.roster=S.roster.filter(p=>p.id!==d.id);if(g){delete g.present[d.id];if(g.goalie===d.id||g.current.includes(d.id)){S.game=null}}}render();return}
+  if(a==='tot'){const el=document.getElementById('tot');el.textContent=Math.min(8,Math.max(2,+el.textContent+ +d.d));updSummary();return}
+  if(a==='start'){
+    const present={};document.querySelectorAll('[data-pres]').forEach(c=>present[c.dataset.pres]=c.checked);
+    const gl=document.getElementById('goalie').value;
+    if(!present[gl]){alert('The goalie needs to be marked as here today.');return}
+    startGame(present,gl,+document.getElementById('tot').textContent);render();return}
+  if(a==='advance'){advance();render();return}
+  if(a==='undo'){undo();render();return}
+  if(a==='end'){if(confirm('End this game?')){S.game=null;S.view='setup'}render();return}
+  if(a==='ice'||a==='bench'){sheet={type:a,id:d.id};render();return}
+  if(a==='goalie'){sheet={type:'goalie'};render();return}
+  if(a==='close'){sheet=null;render();return}
+  if(a==='swap'){snap(g);g.current=g.current.map(i=>i===d.out?d.in:i);credit(g,[d.in]);sheet=null;render();return}
+  if(a==='hurt'){snap(g);g.out[d.id]=true;fixCurrent(g);sheet=null;render();return}
+  if(a==='back'){snap(g);delete g.out[d.id];render();return}
+  if(a==='newgoalie'){snap(g);const old=g.goalie;g.goalie=d.id;g.current=g.current.filter(i=>i!==d.id);fixCurrent(g);sheet=null;render();return}
+  if(a==='hurtgoalie'){snap(g);g.out[g.goalie]=true;sheet={type:'goalie'};render();return}
+});
+render();if(S.view==='setup')updSummary();
+if('serviceWorker' in navigator&&location.protocol.startsWith('http')){navigator.serviceWorker.register('sw.js').catch(()=>{})}
+</script>
+</body>
+</html>
