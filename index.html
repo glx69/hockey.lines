@@ -47,18 +47,41 @@ input,select,textarea{width:100%;padding:10px;border:1px solid var(--line);borde
 .tap{cursor:pointer}
 .chk{width:24px;height:24px}
 .hurt .n{text-decoration:line-through;color:var(--mute)}
+small{display:block;color:var(--mute);font-weight:400;font-size:13px}
+.flt{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-bottom:8px}.flt label{font-size:12px;color:var(--mute)}.flt select{padding:8px 6px;font-size:14px;margin-top:2px}
+.two{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:8px}.sheet input{margin-top:8px}
 </style>
 </head>
 <body>
 <main id="app"></main>
 <script>
 const KEY='hockeyLines.v1';
-let S={roster:[],game:null,view:'roster'},sheet=null;
+let S={roster:[],game:null,view:'roster',rf:{sport:'',team:'',sort:'name'},sf:{sport:'',team:'',sort:'name'},setup:null},sheet=null;
 try{const r=localStorage.getItem(KEY);if(r)S=Object.assign(S,JSON.parse(r))}catch(e){}
+try{navigator.storage&&navigator.storage.persist&&navigator.storage.persist()}catch(e){}
 const save=()=>{try{localStorage.setItem(KEY,JSON.stringify(S))}catch(e){}};
-const esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const esc=s=>String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const P=id=>S.roster.find(p=>p.id===id);
 const uid=()=>Math.random().toString(36).slice(2,9);
+const $=id=>document.getElementById(id);
+
+/* ---------- roster helpers ---------- */
+const uniq=(f,sp)=>[...new Set(S.roster.filter(p=>!sp||(sp==='_none'?!p.sport:p.sport===sp)).map(p=>(p[f]||'').trim()).filter(Boolean))].sort((a,b)=>a.localeCompare(b));
+const canon=(f,v)=>{v=(v||'').trim();return uniq(f).find(x=>x.toLowerCase()===v.toLowerCase())||v};
+const sub=p=>[p.sport,p.team].filter(Boolean).join(' · ');
+function shown(f){
+  const l=S.roster.filter(p=>(!f.sport||(f.sport==='_none'?!p.sport:p.sport===f.sport))&&(!f.team||(f.team==='_none'?!p.team:p.team===f.team)));
+  const k=f.sort,key=p=>k==='num'?(p.num===''||p.num==null?1e9:parseInt(p.num,10)||0):(p[k]||'\uffff').toLowerCase();
+  return l.sort((a,b)=>{const x=key(a),y=key(b);return x<y?-1:x>y?1:a.name.localeCompare(b.name)});
+}
+function ctl(k){
+  const f=S[k],opt=(arr,v,none)=>`<option value="">All</option>${arr.map(x=>`<option value="${esc(x)}" ${v===x?'selected':''}>${esc(x)}</option>`).join('')}<option value="_none" ${v==='_none'?'selected':''}>${none}</option>`;
+  const so=[['name','Name'],['num','Number'],['sport','Sport'],['team','Team']];
+  return `<div class="flt"><label>Sport<select data-flt="${k}.sport">${opt(uniq('sport'),f.sport,'No sport')}</select></label>
+  <label>Team<select data-flt="${k}.team">${opt(uniq('team',f.sport),f.team,'No team')}</select></label>
+  <label>Sort by<select data-flt="${k}.sort">${so.map(([v,t])=>`<option value="${v}" ${f.sort===v?'selected':''}>${t}</option>`).join('')}</select></label></div>`;
+}
+const dl=()=>`<datalist id="dlS">${uniq('sport').map(x=>`<option value="${esc(x)}">`).join('')}</datalist><datalist id="dlT">${uniq('team').map(x=>`<option value="${esc(x)}">`).join('')}</datalist>`;
 
 /* ---------- rotation logic ---------- */
 function pool(g){return S.roster.filter(p=>g.present[p.id]&&p.id!==g.goalie&&!g.out[p.id]).map(p=>p.id)}
@@ -83,42 +106,69 @@ function startGame(present,goalie,total){
 function advance(){const g=S.game;snap(g);g.shift++;g.current=nextLine(g);credit(g,g.current)}
 function undo(){const g=S.game;const h=g.history.pop();if(!h)return;Object.assign(g,JSON.parse(h))}
 
+/* ---------- setup state ---------- */
+function selected(){return S.roster.filter(p=>S.setup.present[p.id]).map(p=>p.id)}
+function setupInit(){
+  if(!S.setup){const multi=uniq('sport').length>1||uniq('team').length>1;
+    S.setup={present:multi?{}:Object.fromEntries(S.roster.map(p=>[p.id,true])),goalie:'',total:5}}
+  Object.keys(S.setup.present).forEach(id=>{if(!P(id)||!S.setup.present[id])delete S.setup.present[id]});
+  if(!selected().includes(S.setup.goalie))S.setup.goalie='';
+}
+function sumText(){
+  const sel=selected(),st=S.setup;
+  if(!sel.length)return 'Check the players who are here today.';
+  if(!st.goalie)return 'Pick a goalie to see the rotation.';
+  const sk=sel.length-1,on=st.total-1;
+  let t=sk<=on?`${sk} skaters, ${on} spots: everyone plays the whole time.`:`${sk} skaters, ${on} on ice at a time: ${sk-on} sit each shift.`;
+  const sp=[...new Set(sel.map(i=>P(i).sport).filter(Boolean))],tm=[...new Set(sel.map(i=>P(i).team).filter(Boolean))];
+  if(sp.length>1)t+=` ⚠ Players are from different sports (${sp.join(', ')}).`;
+  else if(tm.length>1)t+=` Mixing teams: ${tm.join(', ')}.`;
+  return t;
+}
+function updSetup(){
+  const sel=selected(),st=S.setup;
+  if(!sel.includes(st.goalie))st.goalie='';
+  const gs=$('goalie');if(gs)gs.innerHTML=`<option value="">Choose goalie…</option>`+sel.map(i=>`<option value="${i}" ${i===st.goalie?'selected':''}>${esc(P(i).name)}</option>`).join('');
+  if($('selct'))$('selct').textContent=sel.length;
+  if($('sumry'))$('sumry').textContent=sumText();
+  save();
+}
+
 /* ---------- rendering ---------- */
 function nm(id){const p=P(id);return p?esc(p.name):'?'}
 function numOf(id){const p=P(id);return p&&p.num?'#'+esc(p.num):''}
 function render(){
   save();
-  const a=document.getElementById('app');
   const tabs=`<div class="tabs">${['roster','setup','game'].map(v=>`<button class="${S.view===v?'on':''}" data-act="view" data-v="${v}">${{roster:'Roster',setup:'Game Setup',game:'Live Game'}[v]}</button>`).join('')}</div>`;
-  a.innerHTML=`<h1>🏒 Hockey Lines</h1>${tabs}${S.view==='roster'?vRoster():S.view==='setup'?vSetup():vGame()}`+(S.view==='game'&&S.game?`<div class="bar"><div><button class="btn" data-act="undo">↩ Undo</button><button class="btn p" data-act="advance">Change Shift ▶</button></div></div>`:'')+(sheet?vSheet():'');
+  $('app').innerHTML=`<h1>🏒 Hockey Lines</h1>${tabs}${S.view==='roster'?vRoster():S.view==='setup'?vSetup():vGame()}`+(S.view==='game'&&S.game?`<div class="bar"><div><button class="btn" data-act="undo">↩ Undo</button><button class="btn p" data-act="advance">Change Shift ▶</button></div></div>`:'')+(sheet?vSheet():'');
 }
 function vRoster(){
-  const rows=S.roster.map(p=>`<div class="row"><span class="num">${p.num?esc(p.num):'–'}</span><span class="n">${esc(p.name)}</span><button class="btn sm d" data-act="del" data-id="${p.id}">Remove</button></div>`).join('')||'<p class="mute">No players yet. Add some below.</p>';
-  return `<div class="card"><h2>Roster (${S.roster.length})</h2>${rows}</div>
+  const l=shown(S.rf);
+  const rows=l.map(p=>`<div class="row tap" data-act="edit" data-id="${p.id}"><span class="num">${p.num?esc(p.num):'–'}</span><span class="n">${esc(p.name)}${sub(p)?`<small>${esc(sub(p))}</small>`:''}</span><span class="s">Edit</span></div>`).join('')||`<p class="mute">${S.roster.length?'No players match these filters.':'No players yet. Add some below.'}</p>`;
+  return `<div class="card"><h2>Roster (${l.length}${l.length!==S.roster.length?' of '+S.roster.length:''})</h2>${S.roster.length?ctl('rf'):''}${rows}</div>
   <div class="card"><h2>Add players</h2>
-  <p class="mute" style="margin-top:0">Type or paste names, one per line (or separated by commas). Optionally add a jersey number first, like “17 Sam”.</p>
+  <p class="mute" style="margin-top:0">Only a name is needed. One per line. Start a line with a number to set a jersey number, like “17 Sam”. Sport and team are optional and apply to everyone you add now. Tap any player above to edit.</p>
   <textarea id="names" rows="4" placeholder="17 Sam&#10;Alex&#10;Jordan"></textarea>
-  <div style="margin-top:8px"><button class="btn p" data-act="add">Add to roster</button></div></div>`;
+  <div class="two"><input id="asport" list="dlS" placeholder="Sport (optional)"><input id="ateam" list="dlT" placeholder="Team (optional)"></div>
+  <div style="margin-top:8px"><button class="btn p" data-act="add">Add to roster</button></div>${dl()}</div>
+  <div class="card"><h2>Backup</h2>
+  <p class="mute" style="margin-top:0">Your roster saves on this phone automatically. A backup protects you if app data gets cleared or you switch phones.</p>
+  <textarea id="bk" rows="3" placeholder="Backup text appears here. To restore, paste it here."></textarea>
+  <div class="flex" style="margin-top:8px"><button class="btn" data-act="bkmake">Make backup</button><button class="btn" data-act="bkrestore">Restore</button><button class="btn" data-act="bkfile">Download</button></div></div>`;
 }
 function vSetup(){
   if(!S.roster.length)return `<div class="card"><p>Add players on the Roster tab first.</p></div>`;
-  const g=S.game,pre=g?g.present:Object.fromEntries(S.roster.map(p=>[p.id,true]));
-  const gl=g?g.goalie:'',tot=g?g.onIceTotal:5;
-  const rows=S.roster.map(p=>`<label class="row tap"><input type="checkbox" class="chk" data-pres="${p.id}" ${pre[p.id]?'checked':''}><span class="n">${esc(p.name)}</span><span class="s">${numOf(p.id)}</span></label>`).join('');
-  return `<div class="card"><h2>Who’s here today?</h2>${rows}</div>
-  <div class="card"><h2>Goalie (never rotates)</h2><select id="goalie">${S.roster.map(p=>`<option value="${p.id}" ${p.id===gl?'selected':''}>${esc(p.name)}</option>`).join('')}</select></div>
+  setupInit();const st=S.setup,l=shown(S.sf),sel=selected();
+  const rows=l.map(p=>`<label class="row tap"><input type="checkbox" class="chk" data-pres="${p.id}" ${st.present[p.id]?'checked':''}><span class="num">${p.num?esc(p.num):'–'}</span><span class="n">${esc(p.name)}${sub(p)?`<small>${esc(sub(p))}</small>`:''}</span></label>`).join('')||'<p class="mute">No players match these filters.</p>';
+  return `<div class="card"><h2>Who’s playing today? (<span id="selct">${sel.length}</span> selected)</h2>
+  <p class="mute" style="margin-top:0">Filter by sport or team, tick players, then change the filter and tick more to mix teams.</p>
+  ${ctl('sf')}<div class="flex" style="margin-bottom:6px"><button class="btn sm" data-act="selall">Select all shown</button><button class="btn sm" data-act="clrall">Clear shown</button></div>${rows}</div>
+  <div class="card"><h2>Goalie (never rotates)</h2><select id="goalie"><option value="">Choose goalie…</option>${sel.map(i=>`<option value="${i}" ${i===st.goalie?'selected':''}>${nm(i)}</option>`).join('')}</select></div>
   <div class="card"><h2>Players on ice (including goalie)</h2>
-  <div class="flex"><button class="btn" data-act="tot" data-d="-1">−</button><b id="tot" style="font-size:24px;min-width:32px;text-align:center">${tot}</b><button class="btn" data-act="tot" data-d="1">+</button></div>
-  <p class="mute" id="sumry"></p></div>
+  <div class="flex"><button class="btn" data-act="tot" data-d="-1">−</button><b id="tot" style="font-size:24px;min-width:32px;text-align:center">${st.total}</b><button class="btn" data-act="tot" data-d="1">+</button></div>
+  <p class="mute" id="sumry">${sumText()}</p></div>
   <button class="btn p" style="width:100%;font-size:18px;padding:14px" data-act="start">Start game</button>
-  ${g?'<p class="mute">Starting a new game replaces the current one.</p>':''}`;
-}
-function updSummary(){
-  const el=document.getElementById('sumry');if(!el)return;
-  const pr=[...document.querySelectorAll('[data-pres]')].filter(c=>c.checked).map(c=>c.dataset.pres);
-  const gl=document.getElementById('goalie').value,tot=+document.getElementById('tot').textContent;
-  const sk=pr.filter(i=>i!==gl).length,on=tot-1;
-  el.textContent=!pr.includes(gl)?'Goalie must be marked present.':sk<=on?`${sk} skaters, ${on} spots: everyone plays the whole time.`:`${sk} skaters, ${on} on ice at a time: ${sk-on} sit each shift.`;
+  ${S.game?'<p class="mute">Starting a new game replaces the current one.</p>':''}`;
 }
 function vGame(){
   const g=S.game;
@@ -127,8 +177,9 @@ function vGame(){
   const bench=pl.filter(id=>!cur.includes(id));
   const hurt=S.roster.filter(p=>g.present[p.id]&&g.out[p.id]);
   const everyone=pl.length<=n;
-  const ln=(id,extra='',act='ice')=>`<div class="row tap" data-act="${act}" data-id="${id}"><span class="num">${numOf(id)||'–'}</span><span class="n">${nm(id)}</span>${extra}<span class="s">${g.counts[id]||0} shifts</span></div>`;
-  const gRow=`<div class="row tap" data-act="goalie"><span class="num">${numOf(g.goalie)||'–'}</span><span class="n">${nm(g.goalie)}</span><span class="badge g">GOALIE</span></div>`;
+  const nmx=id=>{const p=P(id);return p?`${esc(p.name)}${sub(p)?`<small>${esc(sub(p))}</small>`:''}`:'?'};
+  const ln=(id,extra='',act='ice')=>`<div class="row tap" data-act="${act}" data-id="${id}"><span class="num">${numOf(id)||'–'}</span><span class="n">${nmx(id)}</span>${extra}<span class="s">${g.counts[id]||0} shifts</span></div>`;
+  const gRow=`<div class="row tap" data-act="goalie"><span class="num">${numOf(g.goalie)||'–'}</span><span class="n">${nmx(g.goalie)}</span><span class="badge g">GOALIE</span></div>`;
   const dbl=nxt.filter(id=>cur.includes(id));
   const nextHtml=everyone?'<p class="mute" style="margin:0">Not enough skaters to rotate. Everyone stays on.</p>':nxt.map(id=>ln(id,cur.includes(id)?'<span class="badge">2× DOUBLE SHIFT</span>':'','bench')).join('');
   return `<div class="card ice"><h2>On ice now · Shift ${g.shift}</h2>${gRow}${cur.map(id=>ln(id)).join('')}<p class="mute" style="margin:6px 0 0">Tap a player to sub or mark hurt.</p></div>
@@ -140,41 +191,51 @@ function vGame(){
 function vSheet(){
   const g=S.game,{type,id}=sheet;
   const close=`<button class="btn" data-act="close">Cancel</button>`;
+  const wrap=b=>`<div class="sheet" data-act="closebg"><div>${b}</div></div>`;
+  if(type==='edit'){const p=P(id);if(!p)return '';
+    return wrap(`<h2>Edit player</h2><input id="en" value="${esc(p.name)}" placeholder="Name"><input id="enum" value="${esc(p.num||'')}" placeholder="Number (optional)" inputmode="numeric"><input id="es" list="dlS" value="${esc(p.sport||'')}" placeholder="Sport (optional)"><input id="et" list="dlT" value="${esc(p.team||'')}" placeholder="Team (optional)">${dl()}
+    <button class="btn p" data-act="saveedit" data-id="${id}">Save</button><button class="btn d" data-act="del" data-id="${id}">Remove from roster</button>${close}`)}
   if(type==='ice'){
     const bench=pool(g).filter(i=>!g.current.includes(i));
-    return `<div class="sheet" data-act="close"><div onclick="event.stopPropagation()"><h2>Sub out ${nm(id)}</h2>
-    ${bench.map(b=>`<button class="btn" data-act="swap" data-out="${id}" data-in="${b}">${nm(b)} in <span class="mute">(${g.counts[b]||0} shifts)</span></button>`).join('')||'<p class="mute">Nobody on the bench.</p>'}
-    <button class="btn d" data-act="hurt" data-id="${id}">${nm(id)} is hurt (auto-replace)</button>${close}</div></div>`;
+    return wrap(`<h2>Sub out ${nm(id)}</h2>${bench.map(b=>`<button class="btn" data-act="swap" data-out="${id}" data-in="${b}">${nm(b)} in <span class="mute">(${g.counts[b]||0} shifts)</span></button>`).join('')||'<p class="mute">Nobody on the bench.</p>'}
+    <button class="btn d" data-act="hurt" data-id="${id}">${nm(id)} is hurt (auto-replace)</button>${close}`);
   }
-  if(type==='bench')return `<div class="sheet" data-act="close"><div onclick="event.stopPropagation()"><h2>${nm(id)}</h2>
-    ${g.current.length?`<p class="mute">Put on ice now in place of:</p>`+g.current.map(c=>`<button class="btn" data-act="swap" data-out="${c}" data-in="${id}">${nm(c)}</button>`).join(''):''}
-    <button class="btn d" data-act="hurt" data-id="${id}">${nm(id)} is hurt</button>${close}</div></div>`;
+  if(type==='bench')return wrap(`<h2>${nm(id)}</h2>${g.current.length?`<p class="mute">Put on ice now in place of:</p>`+g.current.map(c=>`<button class="btn" data-act="swap" data-out="${c}" data-in="${id}">${nm(c)}</button>`).join(''):''}
+    <button class="btn d" data-act="hurt" data-id="${id}">${nm(id)} is hurt</button>${close}`);
   if(type==='goalie'){
     const c=S.roster.filter(p=>g.present[p.id]&&p.id!==g.goalie);
-    return `<div class="sheet" data-act="close"><div onclick="event.stopPropagation()"><h2>Change goalie</h2>
-    ${c.map(p=>`<button class="btn" data-act="newgoalie" data-id="${p.id}">${esc(p.name)} → goalie</button>`).join('')}
-    <button class="btn d" data-act="hurtgoalie">${nm(g.goalie)} is hurt (pick replacement)</button>${close}</div></div>`;
+    return wrap(`<h2>Change goalie</h2>${c.map(p=>`<button class="btn" data-act="newgoalie" data-id="${p.id}">${esc(p.name)} → goalie</button>`).join('')}
+    <button class="btn d" data-act="hurtgoalie">${nm(g.goalie)} is hurt (pick replacement)</button>${close}`);
   }
   return '';
 }
 
 /* ---------- events ---------- */
-document.addEventListener('change',e=>{if(e.target.matches('[data-pres],#goalie'))updSummary()});
+document.addEventListener('change',e=>{
+  const t=e.target;
+  if(t.matches('[data-flt]')){const[k,f]=t.dataset.flt.split('.');S[k][f]=t.value;if(f==='sport')S[k].team='';render();return}
+  if(t.matches('[data-pres]')){S.setup.present[t.dataset.pres]=t.checked;updSetup();return}
+  if(t.id==='goalie'){S.setup.goalie=t.value;updSetup()}
+});
 document.addEventListener('click',e=>{
   const t=e.target.closest('[data-act]');if(!t)return;
   const a=t.dataset.act,g=S.game,d=t.dataset;
-  if(a==='view'){S.view=d.v;sheet=null;render();if(d.v==='setup')updSummary();return}
+  if(a==='closebg'){if(e.target===t){sheet=null;render()}return}
+  if(a==='view'){S.view=d.v;sheet=null;render();return}
   if(a==='add'){
-    const v=document.getElementById('names').value.split(/[\n,]+/).map(s=>s.trim()).filter(Boolean);
-    v.forEach(s=>{const m=s.match(/^#?(\d{1,3})\s+(.+)$/);S.roster.push({id:uid(),name:m?m[2]:s,num:m?m[1]:''})});
+    const sp=canon('sport',$('asport').value),tm=canon('team',$('ateam').value);
+    $('names').value.split(/\n+/).map(s=>s.trim()).filter(Boolean).forEach(s=>{const m=s.match(/^#?(\d{1,3})\s+(.+)$/);S.roster.push({id:uid(),name:m?m[2]:s,num:m?m[1]:'',sport:sp,team:tm})});
     render();return}
-  if(a==='del'){if(confirm('Remove this player?')){S.roster=S.roster.filter(p=>p.id!==d.id);if(g){delete g.present[d.id];if(g.goalie===d.id||g.current.includes(d.id)){S.game=null}}}render();return}
-  if(a==='tot'){const el=document.getElementById('tot');el.textContent=Math.min(8,Math.max(2,+el.textContent+ +d.d));updSummary();return}
+  if(a==='edit'){sheet={type:'edit',id:d.id};render();return}
+  if(a==='saveedit'){const p=P(d.id);const n=$('en').value.trim();if(n)p.name=n;p.num=$('enum').value.trim();p.sport=canon('sport',$('es').value);p.team=canon('team',$('et').value);sheet=null;render();return}
+  if(a==='del'){if(confirm('Remove this player from the roster?')){S.roster=S.roster.filter(p=>p.id!==d.id);if(S.setup)delete S.setup.present[d.id];if(g){delete g.present[d.id];if(g.goalie===d.id||g.current.includes(d.id))S.game=null}sheet=null}render();return}
+  if(a==='selall'||a==='clrall'){shown(S.sf).forEach(p=>{if(a==='selall')S.setup.present[p.id]=true;else delete S.setup.present[p.id]});render();return}
+  if(a==='tot'){S.setup.total=Math.min(8,Math.max(2,S.setup.total+ +d.d));$('tot').textContent=S.setup.total;updSetup();return}
   if(a==='start'){
-    const present={};document.querySelectorAll('[data-pres]').forEach(c=>present[c.dataset.pres]=c.checked);
-    const gl=document.getElementById('goalie').value;
-    if(!present[gl]){alert('The goalie needs to be marked as here today.');return}
-    startGame(present,gl,+document.getElementById('tot').textContent);render();return}
+    const sel=selected();
+    if(!S.setup.goalie||!sel.includes(S.setup.goalie)){alert('Pick a goalie from the players you selected.');return}
+    const present={};sel.forEach(i=>present[i]=true);
+    startGame(present,S.setup.goalie,S.setup.total);render();return}
   if(a==='advance'){advance();render();return}
   if(a==='undo'){undo();render();return}
   if(a==='end'){if(confirm('End this game?')){S.game=null;S.view='setup'}render();return}
@@ -184,10 +245,16 @@ document.addEventListener('click',e=>{
   if(a==='swap'){snap(g);g.current=g.current.map(i=>i===d.out?d.in:i);credit(g,[d.in]);sheet=null;render();return}
   if(a==='hurt'){snap(g);g.out[d.id]=true;fixCurrent(g);sheet=null;render();return}
   if(a==='back'){snap(g);delete g.out[d.id];render();return}
-  if(a==='newgoalie'){snap(g);const old=g.goalie;g.goalie=d.id;g.current=g.current.filter(i=>i!==d.id);fixCurrent(g);sheet=null;render();return}
+  if(a==='newgoalie'){snap(g);g.goalie=d.id;g.current=g.current.filter(i=>i!==d.id);fixCurrent(g);sheet=null;render();return}
   if(a==='hurtgoalie'){snap(g);g.out[g.goalie]=true;sheet={type:'goalie'};render();return}
+  if(a==='bkmake'){const ta=$('bk');ta.value=JSON.stringify({app:'hockey-lines',roster:S.roster});ta.select();try{navigator.clipboard.writeText(ta.value)}catch(x){}return}
+  if(a==='bkrestore'){
+    try{const o=JSON.parse($('bk').value);const r=(o.roster||o).filter(p=>p&&p.name).map(p=>({id:p.id||uid(),name:String(p.name),num:p.num||'',sport:p.sport||'',team:p.team||''}));
+      if(!r.length)throw 0;if(confirm(`Replace the current roster with ${r.length} players from the backup?`)){S.roster=r;S.setup=null;S.game=null;render()}}
+    catch(x){alert('That doesn’t look like a valid backup. Paste the full backup text and try again.')}return}
+  if(a==='bkfile'){try{const b=new Blob([JSON.stringify({app:'hockey-lines',roster:S.roster})],{type:'application/json'});const u=URL.createObjectURL(b),l=document.createElement('a');l.href=u;l.download='hockey-roster-backup.json';l.click()}catch(x){alert('Download isn’t available here. Use Make backup and copy the text instead.')}return}
 });
-render();if(S.view==='setup')updSummary();
+render();
 if('serviceWorker' in navigator&&location.protocol.startsWith('http')){navigator.serviceWorker.register('sw.js').catch(()=>{})}
 </script>
 </body>
